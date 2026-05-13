@@ -9,7 +9,7 @@
                 <File Id="fil72C5DF852EC31B67E9163666B72DC7E9" KeyPath="yes" Source="$(var.CapFrameXInstaller.BinaryDir)\AutoMapper.pdb" />
             </Component>
             <Component Id="cmp010346265BD055915F2AF759DD155A33" Guid="*" Win64="yes">
-                <File Id="filC36055874C8412817A8A62A3DD63255D" KeyPath="yes" Source="$(var.CapFrameXInstaller.BinaryDir)\CapFrameX.ADLX.dll" />
+                <File Id="filC36055874C8412817A8A62A3DD63255D" KeyPath="yes" Source="$(var.CapFrameXInstaller.BinaryDir)\CapFrameX.Adl.dll" />
             </Component>
             <Component Id="cmp38FB2D846FB5A26B8F01D5155B71ADB5" Guid="*" Win64="yes">
                 <File Id="fil55A807ADC7391DA20338EF97DF3F4767" KeyPath="yes" Source="$(var.CapFrameXInstaller.BinaryDir)\CapFrameX.ApiInterface.dll" />

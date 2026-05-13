@@ -32,9 +32,9 @@ pipeline {
 							}
 						}
 			    
-			    		stage('Build ADLX') {
+			    		stage('Build Adl') {
 							steps {
-								bat "msbuild source\\CapFrameX.ADLX\\CapFrameX.ADLX.vcxproj /p:SolutionDir=${pwd()}\\ /p:Configuration=Release /p:Platform=x64 /p:DeployOnBuild=true /p:VisualStudioVersion=17.0"
+								bat "msbuild source\\CapFrameX.Adl\\CapFrameX.Adl.vcxproj /p:SolutionDir=${pwd()}\\ /p:Configuration=Release /p:Platform=x64 /p:DeployOnBuild=true /p:VisualStudioVersion=17.0"
 							}
 						}
 

@@ -82,7 +82,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CapFrameX.Capture.Contracts
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CapFrameX.IGCL", "source\CapFrameX.IGCL\CapFrameX.IGCL.vcxproj", "{9746F818-C1B9-461D-BD07-D20A103DC751}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CapFrameX.ADLX", "source\CapFrameX.ADLX\CapFrameX.ADLX.vcxproj", "{CFA42830-B349-4978-B708-5B1BFA9C579B}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CapFrameX.Adl", "source\CapFrameX.Adl\CapFrameX.Adl.vcxproj", "{CFA42830-B349-4978-B708-5B1BFA9C579B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CapFrameX.Hardware.Controller", "source\CapFrameX.Hardware.Controller\CapFrameX.Hardware.Controller.csproj", "{62E9AEEB-B322-48D0-B69B-FE64E62C461B}"
 EndProject

@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Adl2">
+      <UniqueIdentifier>{4d7e3b39-3a1a-4e15-9d4c-13b1f0f37c4a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="framework.h">
@@ -21,7 +24,7 @@
     <ClInclude Include="pch.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ADLXManager.h">
+    <ClInclude Include="AdlManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="SDK\ADLXHelper\Windows\C\ADLXHelper.h">
@@ -81,6 +84,12 @@
     <ClInclude Include="SDK\Include\ISystem.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Adl2\adl2_pmlog_min.h">
+      <Filter>Adl2</Filter>
+    </ClInclude>
+    <ClInclude Include="Adl2\Adl2PmLogManager.h">
+      <Filter>Adl2</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -89,7 +98,7 @@
     <ClCompile Include="pch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="ADLXManager.cpp">
+    <ClCompile Include="AdlManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="SDK\ADLXHelper\Windows\Cpp\ADLXHelper.cpp">
@@ -97,6 +106,9 @@
     </ClCompile>
     <ClCompile Include="SDK\Platform\Windows\WinAPIs.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Adl2\Adl2PmLogManager.cpp">
+      <Filter>Adl2</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

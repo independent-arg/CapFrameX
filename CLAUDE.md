@@ -23,7 +23,7 @@ msbuild source\CapFrameX\CapFrameX.csproj /p:Configuration=Release /p:Platform=x
 ```bash
 msbuild source\CapFrameX.Hwinfo\CapFrameX.Hwinfo.vcxproj /p:SolutionDir=%CD%\ /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0
 msbuild source\CapFrameX.IGCL\CapFrameX.IGCL.vcxproj /p:SolutionDir=%CD%\ /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0
-msbuild source\CapFrameX.ADLX\CapFrameX.ADLX.vcxproj /p:SolutionDir=%CD%\ /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0
+msbuild source\CapFrameX.Adl\CapFrameX.Adl.vcxproj /p:SolutionDir=%CD%\ /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0
 ```
 
 ### Build Installer
@@ -69,7 +69,7 @@ The solution (`CapFrameX.sln`) contains ~40 projects mixing C# (.NET Framework 4
 - `CapFrameX.RTSSInterface` - Rivatuner Statistics Server integration
 - `CapFrameX.Hwinfo` - HWInfo64 sensor integration
 - `CapFrameX.IGCL` - Intel Graphics Control Library
-- `CapFrameX.ADLX` - AMD Display Library
+- `CapFrameX.Adl` - AMD Display Library (ADLX primary + ADL2 PMLog secondary)
 
 **Webservice (ASP.NET Core 3.1)**
 - `CapFrameX.Webservice.Host` - API host

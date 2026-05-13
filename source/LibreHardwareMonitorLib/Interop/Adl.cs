@@ -12,14 +12,15 @@ using System.Runtime.InteropServices;
 namespace LibreHardwareMonitor.Interop;
 
 /// <summary>
-/// AMD ADLX (AMD Display Library X) interop wrapper.
-/// Replaces the legacy ADL2 API with the modern ADLX interface.
+/// AMD Display Library interop wrapper. Bridges the modern ADLX COM API
+/// (primary source) with the legacy ADL2 PMLog telemetry path (second
+/// source for sensors ADLX does not expose).
 /// </summary>
-internal static class ADLX
+internal static class Adl
 {
     public const int ATI_VENDOR_ID = 0x1002;
 
-    private const string DllName = "CapFrameX.ADLX.dll";
+    private const string DllName = "CapFrameX.Adl.dll";
 
     private const int MAX_DRIVER_PATH_LEN = 200;
     private const int MAX_GPU_NAME_LEN = 100;
@@ -187,6 +188,88 @@ internal static class ADLX
 
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = MAX_DRIVER_PATH_LEN)]
         public string DriverPath;
+
+        /// <summary>
+        /// ADL2 adapter index for this physical GPU. -1 when no ADL2 mapping
+        /// is available. Used to address ADL2 PMLog calls.
+        /// </summary>
+        public int Adl2AdapterIndex;
+    }
+
+    public const int ADL2_PMLOG_MAX_VALUES = 256;
+
+    /// <summary>
+    /// One PMLog sensor reading. SensorIndex is one of the
+    /// <see cref="Adl2PmLogSensor"/> values; Value is the raw integer reading
+    /// (unit depends on the index — see CapFrameX AMD GPU documentation).
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Adl2PmLogEntry
+    {
+        public int SensorIndex;
+        public int Value;
+    }
+
+    /// <summary>
+    /// Mirror of Adl2PmLogSupport in Adl2PmLogManager.h. Lists the PMLog
+    /// sensor indices the driver advertises for the GPU.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Adl2PmLogSupport
+    {
+        [MarshalAs(UnmanagedType.I1)]
+        public bool Supported;
+        public int SensorCount;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = ADL2_PMLOG_MAX_VALUES)]
+        public int[] SupportedSensors;
+    }
+
+    /// <summary>
+    /// Mirror of Adl2PmLogData in Adl2PmLogManager.h. EntryCount tells how
+    /// many entries in <see cref="Entries"/> are valid.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Adl2PmLogData
+    {
+        [MarshalAs(UnmanagedType.I1)]
+        public bool Supported;
+        public int SampleRate;
+        public int EntryCount;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = ADL2_PMLOG_MAX_VALUES)]
+        public Adl2PmLogEntry[] Entries;
+    }
+
+    /// <summary>
+    /// Subset of ADL_PMLOG_* sensor indices that CapFrameX consumes from the
+    /// PMLog second source. Values match the public AMD ADL SDK and are
+    /// stable across SDK revisions. Sensors that ADLX already exposes (e.g.
+    /// GFXCLK, MEMCLK, HOTSPOT, ASIC_POWER) are intentionally omitted —
+    /// ADLX is the authoritative source for them.
+    /// </summary>
+    public enum Adl2PmLogSensor
+    {
+        ClkSoCClock          = 3,
+        TemperatureVrVddc    = 11,
+        TemperatureVrmVdd    = 12,
+        TemperatureLiquid    = 13,
+        TemperaturePlx       = 14,
+        SsnGfxCurrent        = 18,
+        SsnGfxPower          = 19,
+        SsnSoCVoltage        = 20,
+        SsnSoCCurrent        = 21,
+        SsnSoCPower          = 22,
+        InfoActivityMem      = 24,
+        MemVoltage           = 26,
+        TemperatureVrSoC     = 30,
+        ThrottlerStatus      = 33,
+        PcieBusSpeed         = 34,
+        PcieBusLanes         = 35,
+        ClkVcn0Clock1        = 7,
+        ClkVcn0Clock2        = 8,
+        ClkFabricClock       = 38,
+        ClkDcefClock         = 39,
     }
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "IntializeAdlx")]
@@ -206,6 +289,12 @@ internal static class ADLX
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "GetAdlxDeviceInfo")]
     private static extern bool GetAdlxDeviceInfo_Native(uint index, ref AdlxDeviceInfo deviceInfo);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "GetAdl2PmLogSupport")]
+    private static extern bool GetAdl2PmLogSupport_Native(uint index, ref Adl2PmLogSupport pmLogSupport);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "GetAdl2PmLogData")]
+    private static extern bool GetAdl2PmLogData_Native(uint index, ref Adl2PmLogData pmLogData);
 
     /// <summary>
     /// Checks if the ADLX DLL is available and can be loaded.
@@ -366,6 +455,58 @@ internal static class ADLX
         try
         {
             return GetAdlxDeviceInfo_Native(index, ref deviceInfo);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Queries the PMLog sensor indices the driver advertises for the given
+    /// ADLX GPU. PMLog is the ADL2 telemetry path that complements ADLX with
+    /// rail-level data (SoC clock/voltage, VR temperatures, throttler reason).
+    /// Returns false on systems where ADL2 is unavailable, where no mapping
+    /// to an ADL adapter could be established, or where the driver reports
+    /// no supported sensors.
+    /// </summary>
+    public static bool GetAdl2PmLogSupport(uint index, ref Adl2PmLogSupport support)
+    {
+        if (!_dllLoaded)
+            return false;
+
+        // Allocate the inner array if the caller didn't (Marshal will fill it).
+        if (support.SupportedSensors == null)
+            support.SupportedSensors = new int[ADL2_PMLOG_MAX_VALUES];
+
+        try
+        {
+            return GetAdl2PmLogSupport_Native(index, ref support);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Fetches the most recent PMLog snapshot for the given ADLX GPU.
+    /// First call per GPU implicitly starts PMLog tracking; subsequent calls
+    /// just sample. Caller iterates <see cref="Adl2PmLogData.Entries"/> from
+    /// 0 to <see cref="Adl2PmLogData.EntryCount"/> and picks the sensors of
+    /// interest by <see cref="Adl2PmLogSensor"/> index.
+    /// </summary>
+    public static bool GetAdl2PmLogData(uint index, ref Adl2PmLogData data)
+    {
+        if (!_dllLoaded)
+            return false;
+
+        if (data.Entries == null)
+            data.Entries = new Adl2PmLogEntry[ADL2_PMLOG_MAX_VALUES];
+
+        try
+        {
+            return GetAdl2PmLogData_Native(index, ref data);
         }
         catch
         {

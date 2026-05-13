@@ -3,7 +3,8 @@
 #include <stdlib.h>
 #include "SDK/ADLXHelper/Windows/Cpp/ADLXHelper.h"
 #include "SDK/Include/IPerformanceMonitoring3.h"
-#include "ADLXManager.h"
+#include "SDK/Include/ISystem.h"
+#include "AdlManager.h"
 #include <exception>
 
 // Use ADLX namespace
@@ -16,6 +17,40 @@ static ADLXHelper g_ADLXHelp;
 
 IADLXPerformanceMonitoringServicesPtr _perfMonitoringService;
 IADLXGPUListPtr _gpus;
+
+// Free callback handed to ADLX. Mirrors the ADL_MAIN_MALLOC_CALLBACK in
+// Adl2PmLogManager so that any block allocated through ADL can be released
+// the same way after ADLX hands it back.
+static void ADLX_STD_CALL AdlMainMemoryFree(void** lpBuffer)
+{
+    if (lpBuffer && *lpBuffer)
+    {
+        free(*lpBuffer);
+        *lpBuffer = nullptr;
+    }
+}
+
+// Resolves the ADLX GPU at the given index to an ADL2 adapter index.
+// Returns -1 when no mapping exists (ADL2 not loaded, or single-output
+// adapter ADLX doesn't have a record for).
+static int ResolveAdl2AdapterIndex(adlx_uint adlxIndex)
+{
+    if (_gpus == nullptr)
+        return -1;
+
+    IADLMapping* mapping = g_ADLXHelp.GetAdlMapping();
+    if (!mapping)
+        return -1;
+
+    IADLXGPUPtr gpu;
+    if (!ADLX_SUCCEEDED(_gpus->At(adlxIndex, &gpu)))
+        return -1;
+
+    adlx_int adlIdx = -1;
+    if (!ADLX_SUCCEEDED(mapping->AdlAdapterIndexFromADLXGPU(gpu, &adlIdx)))
+        return -1;
+    return static_cast<int>(adlIdx);
+}
 
 void GetTimeStamp(IADLXGPUMetricsPtr gpuMetrics)
 {
@@ -331,8 +366,22 @@ bool IntializeAdlx()
 
 	try
 	{
-		// Initialize ADLX
-		res = g_ADLXHelp.Initialize();
+		// Bring up ADL2 first so we can hand its context to ADLX. This
+		// also enables the IADLMapping interface, which is the only way
+		// to translate ADLX GPU indices to ADL adapter indices.
+		bool adl2Ready = Adl2PmLog::Initialize();
+
+		// Initialize ADLX. When ADL2 is available, bind both worlds via
+		// InitializeWithCallerAdl; otherwise fall back to standalone so
+		// the original ADLX path still works on systems without ADL2.
+		if (adl2Ready)
+		{
+			res = g_ADLXHelp.InitializeWithCallerAdl(Adl2PmLog::GetContext(), AdlMainMemoryFree);
+		}
+		else
+		{
+			res = g_ADLXHelp.Initialize();
+		}
 
 		if (ADLX_SUCCEEDED(res))
 		{
@@ -385,6 +434,9 @@ void CloseAdlx()
 {
 	_perfMonitoringService->StopPerformanceMetricsTracking();
 	g_ADLXHelp.Terminate();
+	// Tear ADL2 down after ADLX so any in-flight ADLX→ADL bridge calls
+	// finish before we unload atiadlxx.dll.
+	Adl2PmLog::Close();
 }
 
 adlx_uint GetAtiAdpaterCount()
@@ -625,6 +677,8 @@ bool GetAdlxDeviceInfo(const adlx_uint index, AdlxDeviceInfo* adlxDeviceInfo)
 			ret = gpu->UniqueId(&id);
 			adlxDeviceInfo->Id = id;
 
+			adlxDeviceInfo->Adl2AdapterIndex = ResolveAdl2AdapterIndex(index);
+
 			check = true;
 		}
 	}
@@ -638,4 +692,30 @@ bool GetAdlxDeviceInfo(const adlx_uint index, AdlxDeviceInfo* adlxDeviceInfo)
 	}
 
 	return check;
+}
+
+bool GetAdl2PmLogSupport(const adlx_uint index, Adl2PmLogSupport* pmLogSupport)
+{
+	if (!pmLogSupport)
+		return false;
+	memset(pmLogSupport, 0, sizeof(*pmLogSupport));
+
+	int adlIdx = ResolveAdl2AdapterIndex(index);
+	if (adlIdx < 0)
+		return false;
+
+	return Adl2PmLog::GetPmLogSupport(adlIdx, pmLogSupport);
+}
+
+bool GetAdl2PmLogData(const adlx_uint index, Adl2PmLogData* pmLogData)
+{
+	if (!pmLogData)
+		return false;
+	memset(pmLogData, 0, sizeof(*pmLogData));
+
+	int adlIdx = ResolveAdl2AdapterIndex(index);
+	if (adlIdx < 0)
+		return false;
+
+	return Adl2PmLog::GetPmLogData(adlIdx, pmLogData);
 }

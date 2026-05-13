@@ -22,10 +22,10 @@ internal class AmdGpuGroup : IGroup
     {
         try
         {
-            _report.AppendLine("AMD Display Library X (ADLX)");
+            _report.AppendLine("AMD Display Library (ADLX primary, ADL2 PMLog secondary)");
             _report.AppendLine();
 
-            _adlxInitialized = ADLX.Initialize();
+            _adlxInitialized = Adl.Initialize();
 
             _report.Append("Status: ");
             _report.AppendLine(_adlxInitialized ? "OK" : "Failed to initialize");
@@ -33,7 +33,7 @@ internal class AmdGpuGroup : IGroup
 
             if (_adlxInitialized)
             {
-                uint numberOfAdapters = ADLX.GetAdapterCount();
+                uint numberOfAdapters = Adl.GetAdapterCount();
 
                 _report.Append("Number of adapters: ");
                 _report.AppendLine(numberOfAdapters.ToString(CultureInfo.InvariantCulture));
@@ -43,22 +43,24 @@ internal class AmdGpuGroup : IGroup
                 {
                     for (uint i = 0; i < numberOfAdapters; i++)
                     {
-                        ADLX.AdlxDeviceInfo deviceInfo = new();
+                        Adl.AdlxDeviceInfo deviceInfo = new();
 
-                        if (ADLX.GetDeviceInfo(i, ref deviceInfo))
+                        if (Adl.GetDeviceInfo(i, ref deviceInfo))
                         {
                             _report.Append("AdapterIndex: ");
                             _report.AppendLine(i.ToString(CultureInfo.InvariantCulture));
                             _report.Append("GpuName: ");
                             _report.AppendLine(deviceInfo.GpuName);
                             _report.Append("GpuType: ");
-                            _report.AppendLine(((ADLX.GpuType)deviceInfo.GpuType).ToString());
+                            _report.AppendLine(((Adl.GpuType)deviceInfo.GpuType).ToString());
                             _report.Append("VendorId: ");
                             _report.AppendLine(deviceInfo.VendorId);
                             _report.Append("DriverPath: ");
                             _report.AppendLine(deviceInfo.DriverPath);
                             _report.Append("UniqueId: ");
                             _report.AppendLine(deviceInfo.Id.ToString(CultureInfo.InvariantCulture));
+                            _report.Append("Adl2AdapterIndex: ");
+                            _report.AppendLine(deviceInfo.Adl2AdapterIndex.ToString(CultureInfo.InvariantCulture));
                             _report.AppendLine();
 
                             // Check for valid AMD GPU
@@ -73,7 +75,7 @@ internal class AmdGpuGroup : IGroup
         }
         catch (DllNotFoundException)
         {
-            _report.AppendLine("ADLX DLL not found");
+            _report.AppendLine("CapFrameX.Adl DLL not found");
         }
         catch (EntryPointNotFoundException e)
         {
@@ -104,7 +106,7 @@ internal class AmdGpuGroup : IGroup
                 gpu.Close();
 
             if (_adlxInitialized)
-                ADLX.Close();
+                Adl.Close();
         }
         catch (Exception)
         {

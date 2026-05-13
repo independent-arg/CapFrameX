@@ -9,7 +9,7 @@ namespace LibreHardwareMonitor.Hardware.Gpu;
 internal sealed class AmdGpu : GenericGpu
 {
     private readonly uint _adapterIndex;
-    private readonly ADLX.AdlxDeviceInfo _deviceInfo;
+    private readonly Adl.AdlxDeviceInfo _deviceInfo;
     private readonly string _d3dDeviceId;
 
     // Temperature sensors
@@ -42,7 +42,43 @@ internal sealed class AmdGpu : GenericGpu
     private readonly Sensor _memoryUsed;
     private readonly Sensor _sharedMemory;
 
-    public AmdGpu(uint adapterIndex, ADLX.AdlxDeviceInfo deviceInfo, ISettings settings)
+    // --- ADL2 PMLog second source -----------------------------------------
+    // These sensors fill gaps that ADLX does not cover. ADLX is authoritative
+    // for every metric it provides — anything redundant (GFXCLK, MEMCLK,
+    // HOTSPOT, FAN_RPM/PCT, GFX_VOLT, ACTIVITY_GFX, ASIC/BOARD_POWER) is
+    // intentionally absent here and continues to come from Adl.
+    private readonly Sensor _temperatureVrCore;
+    private readonly Sensor _temperatureVrMemory;
+    private readonly Sensor _temperatureVrSoC;
+    private readonly Sensor _temperatureLiquid;
+    private readonly Sensor _temperaturePlx;
+
+    private readonly Sensor _socClock;
+    private readonly Sensor _fabricClock;
+    private readonly Sensor _displayEngineClock;
+    private readonly Sensor _vcnDecoderClock;
+    private readonly Sensor _vcnEncoderClock;
+
+    private readonly Sensor _socVoltage;
+    private readonly Sensor _memoryVoltage;
+
+    private readonly Sensor _coreCurrent;
+    private readonly Sensor _socCurrent;
+
+    private readonly Sensor _corePowerRail;
+    private readonly Sensor _socPower;
+
+    private readonly Sensor _memoryControllerLoad;
+
+    private readonly Sensor _pcieSpeed;
+    private readonly Sensor _pcieLanes;
+    private readonly Sensor _throttlerStatus;
+
+    // Cached PMLog support — checked once in the constructor so Update()
+    // can skip the native call when PMLog isn't usable for this GPU.
+    private readonly bool _pmLogAvailable;
+
+    public AmdGpu(uint adapterIndex, Adl.AdlxDeviceInfo deviceInfo, ISettings settings)
         : base(deviceInfo.GpuName?.Trim() ?? "AMD GPU",
                new Identifier("gpu-amd", adapterIndex.ToString(CultureInfo.InvariantCulture)),
                settings)
@@ -51,7 +87,7 @@ internal sealed class AmdGpu : GenericGpu
         _deviceInfo = deviceInfo;
 
         // Determine if discrete GPU based on GpuType
-        IsDiscreteGpu = deviceInfo.GpuType == (uint)ADLX.GpuType.Discrete;
+        IsDiscreteGpu = deviceInfo.GpuType == (uint)Adl.GpuType.Discrete;
 
         int index = (int)adapterIndex;
 
@@ -101,9 +137,38 @@ internal sealed class AmdGpu : GenericGpu
         _sharedMemory = new Sensor("GPU Memory Shared", 3, SensorType.Data, this, settings)
         { PresentationSortKey = $"{index}_6_1" };
 
-        // Activate sensors based on support flags BEFORE calling Update()
-        // This ensures sensors are visible in the UI even if the first telemetry call returns no data
+        // --- PMLog-only sensors. Sort keys put them after the ADLX ones.
+        _temperatureVrCore   = new Sensor("GPU VRM Core",   4, SensorType.Temperature, this, settings) { PresentationSortKey = $"{index}_2_4" };
+        _temperatureVrMemory = new Sensor("GPU VRM Memory", 5, SensorType.Temperature, this, settings) { PresentationSortKey = $"{index}_2_5" };
+        _temperatureVrSoC    = new Sensor("GPU VRM SoC",    6, SensorType.Temperature, this, settings) { PresentationSortKey = $"{index}_2_6" };
+        _temperatureLiquid   = new Sensor("GPU Liquid",     7, SensorType.Temperature, this, settings) { PresentationSortKey = $"{index}_2_7" };
+        _temperaturePlx      = new Sensor("GPU PLX",        8, SensorType.Temperature, this, settings) { PresentationSortKey = $"{index}_2_8" };
+
+        _socClock           = new Sensor("GPU SoC",            3, SensorType.Clock, this, settings) { PresentationSortKey = $"{index}_0_3" };
+        _fabricClock        = new Sensor("GPU Fabric (FCLK)",  4, SensorType.Clock, this, settings) { PresentationSortKey = $"{index}_0_4" };
+        _displayEngineClock = new Sensor("GPU Display Engine", 5, SensorType.Clock, this, settings) { PresentationSortKey = $"{index}_0_5" };
+        _vcnDecoderClock    = new Sensor("GPU VCN Decoder",    6, SensorType.Clock, this, settings) { PresentationSortKey = $"{index}_0_6" };
+        _vcnEncoderClock    = new Sensor("GPU VCN Encoder",    7, SensorType.Clock, this, settings) { PresentationSortKey = $"{index}_0_7" };
+
+        _socVoltage    = new Sensor("GPU SoC",    1, SensorType.Voltage, this, settings) { PresentationSortKey = $"{index}_4_1" };
+        _memoryVoltage = new Sensor("GPU Memory", 2, SensorType.Voltage, this, settings) { PresentationSortKey = $"{index}_4_2" };
+
+        _coreCurrent = new Sensor("GPU Core", 0, SensorType.Current, this, settings) { PresentationSortKey = $"{index}_7_0" };
+        _socCurrent  = new Sensor("GPU SoC",  1, SensorType.Current, this, settings) { PresentationSortKey = $"{index}_7_1" };
+
+        _corePowerRail = new Sensor("GPU Core Rail (VDDCR_GFX)", 2, SensorType.Power, this, settings) { PresentationSortKey = $"{index}_3_2" };
+        _socPower      = new Sensor("GPU SoC",                   3, SensorType.Power, this, settings) { PresentationSortKey = $"{index}_3_3" };
+
+        _memoryControllerLoad = new Sensor("GPU Memory Controller", 2, SensorType.Load, this, settings) { PresentationSortKey = $"{index}_1_2" };
+
+        _pcieSpeed       = new Sensor("GPU PCIe Gen",   0, SensorType.Factor, this, settings) { PresentationSortKey = $"{index}_8_0" };
+        _pcieLanes       = new Sensor("GPU PCIe Lanes", 1, SensorType.Factor, this, settings) { PresentationSortKey = $"{index}_8_1" };
+        _throttlerStatus = new Sensor("GPU Throttler",  2, SensorType.Factor, this, settings) { PresentationSortKey = $"{index}_8_2" };
+
+        // Activate ADLX sensors based on support flags BEFORE calling Update().
+        // Then layer PMLog sensors on top — only the ones the driver advertises.
         ActivateSensorsFromSupportFlags();
+        _pmLogAvailable = ActivateSensorsFromPmLogSupport();
     }
 
     /// <summary>
@@ -112,8 +177,8 @@ internal sealed class AmdGpu : GenericGpu
     /// </summary>
     private void ActivateSensorsFromSupportFlags()
     {
-        ADLX.AdlxTelemetrySupport support = new();
-        if (!ADLX.GetTelemetrySupport(_adapterIndex, ref support))
+        Adl.AdlxTelemetrySupport support = new();
+        if (!Adl.GetTelemetrySupport(_adapterIndex, ref support))
             return;
 
         // Temperature sensors
@@ -163,6 +228,102 @@ internal sealed class AmdGpu : GenericGpu
             ActivateSensor(_sharedMemory);
     }
 
+    /// <summary>
+    /// Activates the PMLog (ADL2) sensors the driver advertises for this GPU.
+    /// Only sensors whose ADL_PMLOG_* index is listed in <c>support.SupportedSensors</c>
+    /// get activated — keeping the sensor list aligned with what the driver
+    /// will actually fill in <see cref="Update"/>.
+    /// </summary>
+    private bool ActivateSensorsFromPmLogSupport()
+    {
+        Adl.Adl2PmLogSupport support = new();
+        if (!Adl.GetAdl2PmLogSupport(_adapterIndex, ref support) || !support.Supported)
+            return false;
+
+        for (int i = 0; i < support.SensorCount; i++)
+        {
+            switch ((Adl.Adl2PmLogSensor)support.SupportedSensors[i])
+            {
+                case Adl.Adl2PmLogSensor.TemperatureVrVddc:    ActivateSensor(_temperatureVrCore);   break;
+                case Adl.Adl2PmLogSensor.TemperatureVrmVdd:    ActivateSensor(_temperatureVrMemory); break;
+                case Adl.Adl2PmLogSensor.TemperatureVrSoC:     ActivateSensor(_temperatureVrSoC);    break;
+                case Adl.Adl2PmLogSensor.TemperatureLiquid:    ActivateSensor(_temperatureLiquid);   break;
+                case Adl.Adl2PmLogSensor.TemperaturePlx:       ActivateSensor(_temperaturePlx);      break;
+
+                case Adl.Adl2PmLogSensor.ClkSoCClock:          ActivateSensor(_socClock);            break;
+                case Adl.Adl2PmLogSensor.ClkFabricClock:       ActivateSensor(_fabricClock);         break;
+                case Adl.Adl2PmLogSensor.ClkDcefClock:         ActivateSensor(_displayEngineClock);  break;
+                case Adl.Adl2PmLogSensor.ClkVcn0Clock1:        ActivateSensor(_vcnDecoderClock);     break;
+                case Adl.Adl2PmLogSensor.ClkVcn0Clock2:        ActivateSensor(_vcnEncoderClock);     break;
+
+                case Adl.Adl2PmLogSensor.SsnSoCVoltage:        ActivateSensor(_socVoltage);          break;
+                case Adl.Adl2PmLogSensor.MemVoltage:           ActivateSensor(_memoryVoltage);       break;
+
+                case Adl.Adl2PmLogSensor.SsnGfxCurrent:        ActivateSensor(_coreCurrent);         break;
+                case Adl.Adl2PmLogSensor.SsnSoCCurrent:        ActivateSensor(_socCurrent);          break;
+
+                case Adl.Adl2PmLogSensor.SsnGfxPower:          ActivateSensor(_corePowerRail);       break;
+                case Adl.Adl2PmLogSensor.SsnSoCPower:          ActivateSensor(_socPower);            break;
+
+                case Adl.Adl2PmLogSensor.InfoActivityMem:      ActivateSensor(_memoryControllerLoad);break;
+
+                case Adl.Adl2PmLogSensor.PcieBusSpeed:         ActivateSensor(_pcieSpeed);           break;
+                case Adl.Adl2PmLogSensor.PcieBusLanes:         ActivateSensor(_pcieLanes);           break;
+                case Adl.Adl2PmLogSensor.ThrottlerStatus:      ActivateSensor(_throttlerStatus);     break;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Writes the current PMLog snapshot into the cached PMLog sensors. ADLX
+    /// telemetry has already filled the redundant sensors before this runs,
+    /// so we only touch the ones PMLog exclusively owns. Raw PMLog values are
+    /// in mV/mA/mW; clocks and temperatures arrive in their target units.
+    /// </summary>
+    private void UpdatePmLogSensors()
+    {
+        if (!_pmLogAvailable)
+            return;
+
+        Adl.Adl2PmLogData data = new();
+        if (!Adl.GetAdl2PmLogData(_adapterIndex, ref data) || !data.Supported)
+            return;
+
+        for (int i = 0; i < data.EntryCount; i++)
+        {
+            Adl.Adl2PmLogEntry e = data.Entries[i];
+            switch ((Adl.Adl2PmLogSensor)e.SensorIndex)
+            {
+                case Adl.Adl2PmLogSensor.TemperatureVrVddc:    _temperatureVrCore.Value   = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.TemperatureVrmVdd:    _temperatureVrMemory.Value = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.TemperatureVrSoC:     _temperatureVrSoC.Value    = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.TemperatureLiquid:    _temperatureLiquid.Value   = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.TemperaturePlx:       _temperaturePlx.Value      = (float)e.Value; break;
+
+                case Adl.Adl2PmLogSensor.ClkSoCClock:          _socClock.Value            = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.ClkFabricClock:       _fabricClock.Value         = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.ClkDcefClock:         _displayEngineClock.Value  = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.ClkVcn0Clock1:        _vcnDecoderClock.Value     = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.ClkVcn0Clock2:        _vcnEncoderClock.Value     = (float)e.Value; break;
+
+                // PMLog reports voltages/currents/powers in milli-units.
+                case Adl.Adl2PmLogSensor.SsnSoCVoltage:        _socVoltage.Value    = e.Value / 1000f; break;
+                case Adl.Adl2PmLogSensor.MemVoltage:           _memoryVoltage.Value = e.Value / 1000f; break;
+                case Adl.Adl2PmLogSensor.SsnGfxCurrent:        _coreCurrent.Value   = e.Value / 1000f; break;
+                case Adl.Adl2PmLogSensor.SsnSoCCurrent:        _socCurrent.Value    = e.Value / 1000f; break;
+                case Adl.Adl2PmLogSensor.SsnGfxPower:          _corePowerRail.Value = e.Value / 1000f; break;
+                case Adl.Adl2PmLogSensor.SsnSoCPower:          _socPower.Value      = e.Value / 1000f; break;
+
+                case Adl.Adl2PmLogSensor.InfoActivityMem:      _memoryControllerLoad.Value = (float)Math.Min(e.Value, 100); break;
+
+                case Adl.Adl2PmLogSensor.PcieBusSpeed:         _pcieSpeed.Value       = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.PcieBusLanes:         _pcieLanes.Value       = (float)e.Value; break;
+                case Adl.Adl2PmLogSensor.ThrottlerStatus:      _throttlerStatus.Value = (float)e.Value; break;
+            }
+        }
+    }
+
     public override string DeviceId => _deviceInfo.DriverPath ?? string.Empty;
 
     public override HardwareType HardwareType => HardwareType.GpuAmd;
@@ -172,8 +333,8 @@ internal sealed class AmdGpu : GenericGpu
         UpdateProcessMemorySensors();
 
         // Get ADLX telemetry data
-        ADLX.AdlxTelemetryData telemetry = new();
-        if (ADLX.GetTelemetry(_adapterIndex, 1000, ref telemetry))
+        Adl.AdlxTelemetryData telemetry = new();
+        if (Adl.GetTelemetry(_adapterIndex, 1000, ref telemetry))
         {
             // Temperature sensors
             _temperatureCore.Value = telemetry.GpuTemperatureSupported ? (float)telemetry.GpuTemperatureValue : null;
@@ -207,6 +368,9 @@ internal sealed class AmdGpu : GenericGpu
             // Shared memory from ADLX (in MB, convert to GB)
             _sharedMemory.Value = telemetry.GpuSharedMemorySupported ? (float)(telemetry.GpuSharedMemoryValue / 1024.0) : null;
         }
+
+        // PMLog second source — only sensors that ADLX does not already cover.
+        UpdatePmLogSensors();
     }
 
     public override void Close()
@@ -294,7 +458,7 @@ internal sealed class AmdGpu : GenericGpu
         r.Append("GpuName: ");
         r.AppendLine(_deviceInfo.GpuName);
         r.Append("GpuType: ");
-        r.AppendLine(((ADLX.GpuType)_deviceInfo.GpuType).ToString());
+        r.AppendLine(((Adl.GpuType)_deviceInfo.GpuType).ToString());
         r.Append("VendorId: ");
         r.AppendLine(_deviceInfo.VendorId);
         r.Append("DriverPath: ");
@@ -306,8 +470,8 @@ internal sealed class AmdGpu : GenericGpu
         r.AppendLine("ADLX Telemetry Support");
         r.AppendLine();
 
-        ADLX.AdlxTelemetryData telemetry = new();
-        if (ADLX.GetTelemetry(_adapterIndex, 1000, ref telemetry))
+        Adl.AdlxTelemetryData telemetry = new();
+        if (Adl.GetTelemetry(_adapterIndex, 1000, ref telemetry))
         {
             r.AppendFormat(" GPU Usage: Supported={0}, Value={1}%{2}", telemetry.GpuUsageSupported, telemetry.GpuUsageValue, Environment.NewLine);
             r.AppendFormat(" GPU Clock Speed: Supported={0}, Value={1} MHz{2}", telemetry.GpuClockSpeedSupported, telemetry.GpuClockSpeedValue, Environment.NewLine);
@@ -329,6 +493,33 @@ internal sealed class AmdGpu : GenericGpu
         else
         {
             r.AppendLine(" Failed to get telemetry data");
+        }
+
+        r.AppendLine();
+        r.AppendLine("ADL2 PMLog (second source)");
+        r.AppendLine();
+        r.AppendFormat(" Adl2AdapterIndex: {0}{1}", _deviceInfo.Adl2AdapterIndex, Environment.NewLine);
+
+        if (_pmLogAvailable)
+        {
+            Adl.Adl2PmLogData pm = new();
+            if (Adl.GetAdl2PmLogData(_adapterIndex, ref pm) && pm.Supported)
+            {
+                r.AppendFormat(" SampleRate: {0} ms{1}", pm.SampleRate, Environment.NewLine);
+                r.AppendFormat(" Entries: {0}{1}", pm.EntryCount, Environment.NewLine);
+                for (int i = 0; i < pm.EntryCount; i++)
+                {
+                    r.AppendFormat("   [{0}] sensor={1} value={2}{3}", i, pm.Entries[i].SensorIndex, pm.Entries[i].Value, Environment.NewLine);
+                }
+            }
+            else
+            {
+                r.AppendLine(" PMLog data unavailable");
+            }
+        }
+        else
+        {
+            r.AppendLine(" PMLog not supported for this GPU");
         }
 
         r.AppendLine();
