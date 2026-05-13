@@ -233,11 +233,29 @@ internal sealed class AmdGpu : GenericGpu
     /// Only sensors whose ADL_PMLOG_* index is listed in <c>support.SupportedSensors</c>
     /// get activated — keeping the sensor list aligned with what the driver
     /// will actually fill in <see cref="Update"/>.
+    ///
+    /// Requires <c>PMLog_Start</c> to actually succeed, not just
+    /// <c>PMLog_Support_Get</c>: on RDNA 4 (RX 9070 XT, Adrenalin as of
+    /// 2026-05) the driver advertises ~20 sensors via Support_Get but then
+    /// rejects every Start call with ADL_ERR, leaving sensors empty.
+    /// HWiNFO succeeds on the same GPU through a path we have not been
+    /// able to identify even after four reverse-engineering passes; rather
+    /// than show dead sensors, we hide the entire PMLog block when Start
+    /// fails.
     /// </summary>
     private bool ActivateSensorsFromPmLogSupport()
     {
         Adl.Adl2PmLogSupport support = new();
         if (!Adl.GetAdl2PmLogSupport(_adapterIndex, ref support) || !support.Supported)
+            return false;
+
+        // Trigger the lazy PMLog_Start in the native wrapper and require it
+        // to succeed. We only check StartStatus here — the actual data may
+        // not be populated yet on first call, that's fine and Update() will
+        // pick it up.
+        Adl.Adl2PmLogData probe = new();
+        Adl.GetAdl2PmLogData(_adapterIndex, ref probe);
+        if (probe.StartStatus != 1)
             return false;
 
         for (int i = 0; i < support.SensorCount; i++)
@@ -499,27 +517,62 @@ internal sealed class AmdGpu : GenericGpu
         r.AppendLine("ADL2 PMLog (second source)");
         r.AppendLine();
         r.AppendFormat(" Adl2AdapterIndex: {0}{1}", _deviceInfo.Adl2AdapterIndex, Environment.NewLine);
+        r.AppendFormat(" sizeof(Adl2PmLogData) managed: {0}{1}",
+            System.Runtime.InteropServices.Marshal.SizeOf<Adl.Adl2PmLogData>(), Environment.NewLine);
 
-        if (_pmLogAvailable)
+        // Always dump the PMLog diagnostic block — even when sensors are
+        // not activated, we want to see WHY (StartResultCode etc.) so the
+        // report is useful for triage.
+        r.AppendFormat(" _pmLogAvailable: {0}{1}", _pmLogAvailable, Environment.NewLine);
         {
             Adl.Adl2PmLogData pm = new();
-            if (Adl.GetAdl2PmLogData(_adapterIndex, ref pm) && pm.Supported)
+            bool ok = Adl.GetAdl2PmLogData(_adapterIndex, ref pm);
+            r.AppendFormat(" GetAdl2PmLogData: {0}{1}", ok, Environment.NewLine);
+            r.AppendFormat(" Supported: {0}{1}", pm.Supported, Environment.NewLine);
+            r.AppendFormat(" StartStatus: {0} (1=ok, 0=fail, -1=not attempted){1}", pm.StartStatus, Environment.NewLine);
+            r.AppendFormat(" SupportResultCode: {0}{1}", pm.SupportResultCode, Environment.NewLine);
+            r.AppendFormat(" StartResultCode: {0} (0=OK, -1=ERR, -3=INVALID_PARAM, -8=NOT_SUPPORTED){1}", pm.StartResultCode, Environment.NewLine);
+            r.AppendFormat(" SupportSensorCount (forwarded to Start): {0}{1}", pm.SupportSensorCount, Environment.NewLine);
+            r.AppendFormat(" SuccessfulSampleRate: {0} ms{1}", pm.SuccessfulSampleRate, Environment.NewLine);
+            r.AppendFormat(" ContextMode: {0} (0=ADLX-shared, 1=dedicated){1}", pm.ContextMode, Environment.NewLine);
+            r.AppendFormat(" PreemptiveAdapterCount: {0}{1}", pm.PreemptiveAdapterCount, Environment.NewLine);
+            r.AppendFormat(" PreemptiveStartedCount: {0}{1}", pm.PreemptiveStartedCount, Environment.NewLine);
+            r.AppendFormat(" LoggingAddress: 0x{0:X16}{1}", pm.LoggingAddress, Environment.NewLine);
+            if (pm.SupportedSensorIds != null)
             {
-                r.AppendFormat(" SampleRate: {0} ms{1}", pm.SampleRate, Environment.NewLine);
-                r.AppendFormat(" Entries: {0}{1}", pm.EntryCount, Environment.NewLine);
+                int shown = Math.Min(pm.SupportSensorCount, pm.SupportedSensorIds.Length);
+                r.Append(" SupportedSensorIds:");
+                for (int i = 0; i < shown; i++)
+                {
+                    r.AppendFormat(" {0}", pm.SupportedSensorIds[i]);
+                }
+                r.AppendLine();
+            }
+            r.AppendFormat(" DriverSensorCount: {0}{1}", pm.DriverSensorCount, Environment.NewLine);
+            r.AppendFormat(" LastUpdated: {0}{1}", pm.LastUpdated, Environment.NewLine);
+            r.AppendFormat(" SampleRate: {0} ms{1}", pm.SampleRate, Environment.NewLine);
+            r.AppendFormat(" EntryCount: {0}{1}", pm.EntryCount, Environment.NewLine);
+            if (pm.Entries != null)
+            {
                 for (int i = 0; i < pm.EntryCount; i++)
                 {
                     r.AppendFormat("   [{0}] sensor={1} value={2}{3}", i, pm.Entries[i].SensorIndex, pm.Entries[i].Value, Environment.NewLine);
                 }
             }
-            else
+            // Raw driver buffer — read this section to see exactly what
+            // atiadlxx.dll wrote, regardless of how our code interpreted it.
+            if (pm.RawValues != null && pm.RawValues.Length >= 2 * Adl.ADL2_PMLOG_RAW_DUMP_COUNT)
             {
-                r.AppendLine(" PMLog data unavailable");
+                r.AppendFormat(" RawValues (first {0} rows of ulValues[][2]):{1}", Adl.ADL2_PMLOG_RAW_DUMP_COUNT, Environment.NewLine);
+                for (int i = 0; i < Adl.ADL2_PMLOG_RAW_DUMP_COUNT; i++)
+                {
+                    uint c0 = pm.RawValues[2 * i];
+                    uint c1 = pm.RawValues[2 * i + 1];
+                    if (c0 == 0u && c1 == 0u)
+                        continue;
+                    r.AppendFormat("   raw[{0,3}] = [{1}, {2}]  (0x{1:X8}, 0x{2:X8}){3}", i, c0, c1, Environment.NewLine);
+                }
             }
-        }
-        else
-        {
-            r.AppendLine(" PMLog not supported for this GPU");
         }
 
         r.AppendLine();

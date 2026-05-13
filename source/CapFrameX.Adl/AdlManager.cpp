@@ -371,6 +371,18 @@ bool IntializeAdlx()
 		// to translate ADLX GPU indices to ADL adapter indices.
 		bool adl2Ready = Adl2PmLog::Initialize();
 
+		// Pre-emptively start PMLog on every adapter BEFORE ADLX takes
+		// over. On RDNA 4 (RX 9070 XT, Adrenalin 2026-05) PMLog_Start
+		// returns ADL_ERR after ADLX has called StartPerformanceMetricsTracking
+		// on the adapter, even with a dedicated ADL2 context. Hypothesis:
+		// the AMD driver gives exclusive telemetry ownership to whichever
+		// session starts first. Claiming PMLog before ADLX may bypass that
+		// — and on older RDNA generations the order doesn't matter.
+		if (adl2Ready)
+		{
+			Adl2PmLog::PreemptiveStartAll();
+		}
+
 		// Initialize ADLX. When ADL2 is available, bind both worlds via
 		// InitializeWithCallerAdl; otherwise fall back to standalone so
 		// the original ADLX path still works on systems without ADL2.

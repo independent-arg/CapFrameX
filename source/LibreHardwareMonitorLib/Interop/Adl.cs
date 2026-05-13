@@ -197,6 +197,7 @@ internal static class Adl
     }
 
     public const int ADL2_PMLOG_MAX_VALUES = 256;
+    public const int ADL2_PMLOG_RAW_DUMP_COUNT = 48;
 
     /// <summary>
     /// One PMLog sensor reading. SensorIndex is one of the
@@ -236,6 +237,67 @@ internal static class Adl
         public bool Supported;
         public int SampleRate;
         public int EntryCount;
+
+        /// <summary>
+        /// Result of the wrapper's internal PMLog_Start call:
+        /// 1 = succeeded, 0 = failed, -1 = not attempted.
+        /// </summary>
+        public int StartStatus;
+
+        /// <summary>Driver's raw <c>ulSensors</c> count.</summary>
+        public int DriverSensorCount;
+
+        /// <summary>Driver's raw <c>ulLastUpdated</c> timestamp (microseconds).</summary>
+        public long LastUpdated;
+
+        /// <summary>Raw ADL return code from <c>ADL2_Adapter_PMLog_Support_Get</c>.</summary>
+        public int SupportResultCode;
+
+        /// <summary>Raw ADL return code from <c>ADL2_Adapter_PMLog_Start</c>.</summary>
+        public int StartResultCode;
+
+        /// <summary>How many sensor IDs we forwarded to <c>PMLog_Start</c>.</summary>
+        public int SupportSensorCount;
+
+        /// <summary>Sample rate (ms) we used in the last <c>PMLog_Start</c> attempt.</summary>
+        public int SuccessfulSampleRate;
+
+        /// <summary>
+        /// 0 = the ADLX-shared ADL2 context was used (fallback when the
+        /// dedicated PMLog context couldn't be created),
+        /// 1 = a dedicated ADL2 context was used (the dual-context workaround
+        /// for the ADLX vs ADL2 telemetry conflict).
+        /// </summary>
+        public int ContextMode;
+
+        /// <summary>
+        /// Number of adapters the pre-emptive (before-ADLX) Start sweep saw.
+        /// -1 = not attempted.
+        /// </summary>
+        public int PreemptiveAdapterCount;
+
+        /// <summary>Adapters whose pre-emptive Start succeeded.</summary>
+        public int PreemptiveStartedCount;
+
+        /// <summary><c>ptr_LoggingAddress</c> returned by <c>PMLog_Start</c> (shared buffer address).</summary>
+        public ulong LoggingAddress;
+
+        /// <summary>
+        /// First N supported sensor IDs from <c>PMLog_Support_Get</c>, even when
+        /// <c>PMLog_Start</c> later refused. Trailing slots are zero.
+        /// </summary>
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = ADL2_PMLOG_RAW_DUMP_COUNT)]
+        public int[] SupportedSensorIds;
+
+        /// <summary>
+        /// Raw dump of the first <see cref="ADL2_PMLOG_RAW_DUMP_COUNT"/> rows of
+        /// <c>ADLPMLogData.ulValues[][2]</c>, flattened row-major: for row <c>i</c>
+        /// the [0] column is at index <c>2*i</c>, the [1] column at <c>2*i+1</c>.
+        /// Bypasses our interpretation of the format so the report can show
+        /// the truth on the wire.
+        /// </summary>
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2 * ADL2_PMLOG_RAW_DUMP_COUNT)]
+        public uint[] RawValues;
 
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = ADL2_PMLOG_MAX_VALUES)]
         public Adl2PmLogEntry[] Entries;
@@ -503,6 +565,10 @@ internal static class Adl
 
         if (data.Entries == null)
             data.Entries = new Adl2PmLogEntry[ADL2_PMLOG_MAX_VALUES];
+        if (data.RawValues == null)
+            data.RawValues = new uint[2 * ADL2_PMLOG_RAW_DUMP_COUNT];
+        if (data.SupportedSensorIds == null)
+            data.SupportedSensorIds = new int[ADL2_PMLOG_RAW_DUMP_COUNT];
 
         try
         {
